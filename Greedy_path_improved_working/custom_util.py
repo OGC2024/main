@@ -1,8 +1,58 @@
 from util import *
 import math
+import itertools
 from itertools import permutations, combinations
 
 # 2024-08-03 : all_partitions, find_nearest_bundles, custom_try_merging_multiple_bundles_by_distance, simulated_annealing 함수 추가
+# 2024-08-06 : find_nearest_triples, get_infeasible_pairs 함수 추가
+
+def get_infeasible_pairs(all_orders, dist_mat, all_riders):
+    infeasible_pairs = set()
+    num_orders = len(all_orders)
+
+    for i in range(num_orders):
+        for j in range(i + 1, num_orders):
+            if i != j:
+                order_i = all_orders[i]
+                order_j = all_orders[j]
+                feasible = False  # Assume infeasible until proven otherwise
+
+                for rider in all_riders:
+                    if get_total_volume(all_orders, [i, j]) <= rider.capa:
+                        for shop_seq in itertools.permutations([i, j]):
+                            for dlv_seq in itertools.permutations([i, j]):
+                                feasibility = test_route_feasibility(all_orders, rider, shop_seq, dlv_seq)
+                                if feasibility == 0:
+                                    feasible = True  # Found a feasible combination
+                                    break
+                            if feasible:
+                                break
+                    if feasible:
+                        break
+
+                if not feasible:
+                    infeasible_pairs.add((i, j))
+                    infeasible_pairs.add((j, i))
+
+    return infeasible_pairs
+
+def find_nearest_triples(dist_mat, all_bundles):
+    bundle_triples = []
+    for i in range(len(all_bundles)):
+        for j in range(i + 1, len(all_bundles)):
+            for k in range(j + 1, len(all_bundles)):
+                if i!=j and j!=k and i!= k :
+                    bundle1 = all_bundles[i]
+                    bundle2 = all_bundles[j]
+                    bundle3 = all_bundles[k]
+                    min_dist = min(
+                        dist_mat[bundle1.shop_seq[-1]][bundle2.shop_seq[0]],
+                        dist_mat[bundle2.shop_seq[-1]][bundle3.shop_seq[0]],
+                        dist_mat[bundle3.shop_seq[-1]][bundle1.shop_seq[0]]
+                    )
+                    bundle_triples.append((min_dist, bundle1, bundle2, bundle3))
+    bundle_triples = sorted(bundle_triples, key=lambda x: x[0])
+    return bundle_triples
 
 def draw_route_bundles(all_orders, all_bundles):
     plt.subplots(figsize=(12, 12))
@@ -112,21 +162,37 @@ def evaluate_bundles(bundles):
     total_cost = sum(bundle.cost for bundle in bundles)
     return total_cost
 
-def custom_try_merging_multiple_bundles_by_distance(K, dist_mat, all_orders, bundles, all_riders):
+def custom_try_merging_multiple_bundles_by_distance(K, dist_mat, all_orders, bundles, all_riders, infeasible_pairs):
     merged_orders = list(set([order for bundle in bundles for order in bundle.shop_seq]))  # 중복 주문 제거
     total_volume = get_total_volume(all_orders, merged_orders)
     best_bundles = []
     min_total_cost = float('inf')
 
-    #print(f'merged_orders : {merged_orders}')
-    if len(merged_orders) > 4 :
-        return best_bundles
+    def evaluate_bundles(bundles):
+        total_cost = sum(bundle.cost for bundle in bundles)
+        return total_cost
+
+    def heuristic_merge(orders, rider):
+        # Heuristic approach to find a feasible sequence
+        shop_seq = [orders[0]]
+        dlv_seq = [orders[0]]
+        remaining_orders = set(orders[1:])
+        while remaining_orders:
+            last_shop = shop_seq[-1]
+            nearest_order = min(remaining_orders, key=lambda x: dist_mat[last_shop][x])
+            shop_seq.append(nearest_order)
+            dlv_seq.append(nearest_order)
+            remaining_orders.remove(nearest_order)
+        return shop_seq, dlv_seq
+
     # Try to merge all orders into one bundle
     if len(merged_orders) <= 5:
         for rider in all_riders:
             if rider.available_number > 0 and total_volume <= rider.capa:
-                for shop_pem in permutations(merged_orders):
-                    for dlv_pem in permutations(merged_orders):
+                for shop_pem in itertools.permutations(merged_orders):
+                    if any((shop_pem[i], shop_pem[j]) in infeasible_pairs for i in range(len(shop_pem)) for j in range(i + 1, len(shop_pem))):
+                        continue
+                    for dlv_pem in itertools.permutations(merged_orders):
                         feasibility_check = test_route_feasibility(all_orders, rider, shop_pem, dlv_pem)
                         if feasibility_check == 0:
                             total_dist = get_total_distance(K, dist_mat, shop_pem, dlv_pem)
@@ -142,6 +208,8 @@ def custom_try_merging_multiple_bundles_by_distance(K, dist_mat, all_orders, bun
     if len(merged_orders) > 1:
         two_partitions = filter_partitions(merged_orders, 2)
         for partition in two_partitions:
+            if any((i, j) in infeasible_pairs for part in partition for i in part for j in part if i != j):
+                continue
             candidate_bundles = []
             valid_partition = True
             for part in partition:
@@ -149,8 +217,10 @@ def custom_try_merging_multiple_bundles_by_distance(K, dist_mat, all_orders, bun
                 part_bundle = None
                 for rider in all_riders:
                     if rider.available_number > 0 and part_volume <= rider.capa:
-                        for shop_pem in permutations(part):
-                            for dlv_pem in permutations(part):
+                        for shop_pem in itertools.permutations(part):
+                            if any((shop_pem[i], shop_pem[j]) in infeasible_pairs for i in range(len(shop_pem)) for j in range(i + 1, len(shop_pem))):
+                                continue
+                            for dlv_pem in itertools.permutations(part):
                                 feasibility_check = test_route_feasibility(all_orders, rider, shop_pem, dlv_pem)
                                 if feasibility_check == 0:
                                     total_dist = get_total_distance(K, dist_mat, shop_pem, dlv_pem)
@@ -177,6 +247,8 @@ def custom_try_merging_multiple_bundles_by_distance(K, dist_mat, all_orders, bun
     if len(merged_orders) > 2:
         three_partitions = filter_partitions(merged_orders, 3)
         for partition in three_partitions:
+            if any((i, j) in infeasible_pairs for part in partition for i in part for j in part if i != j):
+                continue
             candidate_bundles = []
             valid_partition = True
             for part in partition:
@@ -184,8 +256,10 @@ def custom_try_merging_multiple_bundles_by_distance(K, dist_mat, all_orders, bun
                 part_bundle = None
                 for rider in all_riders:
                     if rider.available_number > 0 and part_volume <= rider.capa:
-                        for shop_pem in permutations(part):
-                            for dlv_pem in permutations(part):
+                        for shop_pem in itertools.permutations(part):
+                            if any((shop_pem[i], shop_pem[j]) in infeasible_pairs for i in range(len(shop_pem)) for j in range(i + 1, len(shop_pem))):
+                                continue
+                            for dlv_pem in itertools.permutations(part):
                                 feasibility_check = test_route_feasibility(all_orders, rider, shop_pem, dlv_pem)
                                 if feasibility_check == 0:
                                     total_dist = get_total_distance(K, dist_mat, shop_pem, dlv_pem)
