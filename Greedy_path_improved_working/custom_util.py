@@ -4,6 +4,76 @@ from itertools import permutations, combinations
 
 # 2024-08-03 : all_partitions, find_nearest_bundles, custom_try_merging_multiple_bundles_by_distance, simulated_annealing 함수 추가
 
+def draw_route_bundles(all_orders, all_bundles):
+    plt.subplots(figsize=(12, 12))
+    node_size = 5
+
+    shop_x = [order.shop_lon for order in all_orders]
+    shop_y = [order.shop_lat for order in all_orders]
+    plt.scatter(shop_x, shop_y, c='red', s=node_size, label='SHOPS')
+
+    dlv_x = [order.dlv_lon for order in all_orders]
+    dlv_y = [order.dlv_lat for order in all_orders]
+    plt.scatter(dlv_x, dlv_y, c='blue', s=node_size, label='DLVS')
+
+    rider_idx = {
+        'BIKE': 0,
+        'CAR': 0,
+        'WALK': 0
+    }
+
+    for bundle in all_bundles:
+        rider_type = bundle.rider.type
+        shop_seq = bundle.shop_seq
+        dlv_seq = bundle.dlv_seq
+
+        rider_idx[rider_type] += 1
+
+        route_color = 'gray'
+        if rider_type == 'BIKE':
+            route_color = 'green'
+        elif rider_type == 'WALK':
+            route_color = 'orange'
+
+        route_x = []
+        route_y = []
+        for i in shop_seq:
+            route_x.append(all_orders[i].shop_lon)
+            route_y.append(all_orders[i].shop_lat)
+
+        for i in dlv_seq:
+            route_x.append(all_orders[i].dlv_lon)
+            route_y.append(all_orders[i].dlv_lat)
+
+        plt.plot(route_x, route_y, c=route_color, linewidth=0.5)
+
+    plt.legend()
+    plt.show()
+
+def count_bundles(all_bundles):
+    counts = {
+    'WALK': {'total': 0, 'lengths': {}},
+    'BIKE': {'total': 0, 'lengths': {}},
+    'CAR': {'total': 0, 'lengths': {}}
+    }
+
+    # 각 요소를 순회하며 카운팅
+    for bundle in all_bundles:
+        transport_type = bundle.rider.type
+        counts[transport_type]['total'] += 1
+    
+        length = len(bundle.shop_seq)  # `shop_seq`의 길이를 기준으로 한다.
+        if length not in counts[transport_type]['lengths']:
+            counts[transport_type]['lengths'][length] = 0
+        counts[transport_type]['lengths'][length] += 1
+
+    # 결과 출력
+    for transport_type, data in counts.items():
+        total_count = data['total']
+        print(f"{transport_type}: 총 {total_count}개")
+        for length, count in sorted(data['lengths'].items()):
+            print(f"  길이 {length}: {count}개")
+
 def find_nearest_bundles(dist_mat, all_bundles):
     nearest_pairs = []
     for i, bundle1 in enumerate(all_bundles):
@@ -18,7 +88,7 @@ def find_nearest_bundles(dist_mat, all_bundles):
         if nearest_bundle:
             nearest_pairs.append((min_dist, bundle1, nearest_bundle))
     nearest_pairs = sorted(nearest_pairs, key=lambda x: x[0])
-    print(f'Nearest pairs: {nearest_pairs}')  # 디버깅 출력
+    #print(f'Nearest pairs: {nearest_pairs}')  # 디버깅 출력
     return nearest_pairs
 
 def all_partitions(orders):
@@ -49,7 +119,8 @@ def custom_try_merging_multiple_bundles_by_distance(K, dist_mat, all_orders, bun
     min_total_cost = float('inf')
 
     #print(f'merged_orders : {merged_orders}')
-
+    if len(merged_orders) > 4 :
+        return best_bundles
     # Try to merge all orders into one bundle
     if len(merged_orders) <= 5:
         for rider in all_riders:

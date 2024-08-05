@@ -93,7 +93,7 @@ def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
     # Update all_orders_tmp
     all_orders_tmp = [order for order in all_orders_tmp if order.id not in filt_ord]
     time_1 = time.time()
-
+    draw_route_bundles(all_orders, all_bundles)
     # Create initial bundles using a greedy approach based on distance
     while all_orders_tmp:
         ord = all_orders_tmp.pop(0)
@@ -104,7 +104,7 @@ def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
             nearest_order = None
             min_dist = float('inf')
             for other_ord in all_orders_tmp:
-                dist = dist_mat[ord.id, other_ord.id]
+                dist = dist_mat[ord.id, other_ord.id] + dist_mat[ord.id + K, other_ord.id + K] + (dist_mat[ord.id, ord.id + K] + dist_mat[ord.id, other_ord.id + K] + dist_mat[ord.id + K, other_ord.id] + dist_mat[other_ord.id, other_ord.id + K])*0.25
                 if dist < min_dist and new_bundle.total_volume + other_ord.volume <= car_rider.capa:
                     min_dist = dist
                     nearest_order = other_ord
@@ -136,9 +136,116 @@ def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
     best_obj = sum((bundle.cost for bundle in all_bundles)) / K
     print(f'Initial best obj = {best_obj}')
     print(all_bundles)
+    count_bundles(all_bundles)
+    draw_route_bundles(all_orders, all_bundles)
     time_2 = time.time()
     print(f'Elapsed time for initializing: {time_2 - time_1}')
 
+    '''
+    1개짜리 처리 코드 넣기
+    '''
+
+    #1개짜리인 bundle을 모아서 따로 리스트에 저장
+    #각 bundle 별로 merge
+    cant_merge_list = []
+    while True :
+        single_order_bundles = [(-bundle.cost, bundle) for bundle in all_bundles if len(bundle.shop_seq) == 1 and bundle.shop_seq[0] not in cant_merge_list]
+        if not single_order_bundles :
+            break
+        heapq.heapify(single_order_bundles)
+        best_improvement = 0
+        best_candidate = None
+        best_new_bundles = None
+        _, single_bundle = heapq.heappop(single_order_bundles)
+        #print(f'single_bundle : {single_bundle}')
+        Flag = False
+        for i in range(len(all_bundles)):
+            if all_bundles[i] != single_bundle :
+                candidate_bundles = [single_bundle, all_bundles[i]]
+                #print(f'candidate_bundles : {candidate_bundles}')
+                new_bundles = custom_try_merging_multiple_bundles_by_distance(K, dist_mat, all_orders, candidate_bundles, all_riders)
+                #print(f'new bundles : {new_bundles}')
+                if new_bundles:
+                    #print(new_bundles)
+                    current_cost = sum(bundle.cost for bundle in candidate_bundles)
+                    new_cost = sum(bundle.cost for bundle in new_bundles)
+                    improvement = current_cost - new_cost
+                    #print(f'improvement : {improvement}')
+                    if improvement > best_improvement:
+                        best_improvement = improvement
+                        best_candidate = candidate_bundles
+                        best_new_bundles = new_bundles
+                        Flag = True
+        if not Flag :
+            cant_merge_list.append(single_bundle.shop_seq[0])
+
+        if best_new_bundles:
+            #print(f'best_new_bundles : {best_new_bundles}')
+            #print(f'improvement : {best_improvement}')
+            for tmp_bundle in best_candidate :
+                #print(tmp_bundle)
+                all_bundles.remove(tmp_bundle)
+            all_bundles.extend(best_new_bundles)
+            #count_bundles(all_bundles)
+            
+    print(f'single order bundle')
+    count_bundles(all_bundles)
+    #draw_route_bundles(all_orders, all_bundles)
+    print(all_bundles)
+
+    #----------------
+    while True:
+
+        iter = 0
+        max_merge_iter = 1000
+        
+        while iter < max_merge_iter:
+
+            bundle1, bundle2 = select_two_bundles(all_bundles)
+            new_bundle = try_merging_bundles(K, dist_mat, all_orders, bundle1, bundle2)
+
+            if new_bundle is not None:
+                all_bundles.remove(bundle1)
+                bundle1.rider.available_number += 1
+                
+                all_bundles.remove(bundle2)
+                bundle2.rider.available_number += 1
+
+                all_bundles.append(new_bundle)
+                new_bundle.rider.available_number -= 1
+
+                cur_obj = sum((bundle.cost for bundle in all_bundles)) / K
+                if cur_obj < best_obj:
+                    best_obj = cur_obj
+                    print(f'Best obj = {best_obj}')
+
+            else:
+                iter += 1
+
+            if time.time() - start_time > timelimit:
+                break
+
+        if time.time() - start_time > timelimit:
+            break
+
+
+        for bundle in all_bundles:
+            new_rider = get_cheaper_available_riders(all_riders, bundle.rider)
+            if new_rider is not None:
+                old_rider = bundle.rider
+                if try_bundle_rider_changing(all_orders, dist_mat, bundle, new_rider):
+                    old_rider.available_number += 1
+                    new_rider.available_number -= 1
+
+                if time.time() - start_time > timelimit:
+                    break
+
+
+        cur_obj = sum((bundle.cost for bundle in all_bundles)) / K
+        if cur_obj < best_obj:
+            best_obj = cur_obj
+            print(f'Best obj = {best_obj}')
+    '''
     iter = 0
     while time.time() - start_time < timelimit and len(all_bundles) > 1:
         iter += 1
@@ -146,11 +253,13 @@ def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
 
         improved = False
         for min_dist, bundle1, bundle2 in nearest_pairs:
+            #print(bundle1, bundle2)
             new_bundles = custom_try_merging_multiple_bundles_by_distance(K, dist_mat, all_orders, [bundle1, bundle2], all_riders)
-            if new_bundles:
+            #print(f'new_bundles : {new_bundles}')
+            if new_bundles :
                 improvement = sum(bundle.cost for bundle in [bundle1, bundle2]) - sum(bundle.cost for bundle in new_bundles)
                 if improvement > 0:
-                    print(f'Improvement: {improvement}, New bundles: {new_bundles}')
+                    #print(f'Improvement: {improvement}, New bundles: {new_bundles}')
                     bundle1.rider.available_number += 1
                     bundle2.rider.available_number += 1
                     all_bundles.remove(bundle1)
@@ -161,25 +270,32 @@ def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
                     cur_obj = sum((bundle.cost for bundle in all_bundles)) / K
                     if cur_obj < best_obj:
                         best_obj = cur_obj
-                        print(f'Best obj = {best_obj}')
+                        #print(f'Best obj = {best_obj}')
+                        count_bundles(all_bundles)
+                        draw_route_bundles(all_orders, all_bundles)
                     improved = True
                     break
+            if time.time() - start_time >= timelimit :
+                break
             if improved:
                 break
-
+    '''
+        '''
         if not improved:  # If no improvement, switch to simulated annealing
             sa_timelimit = timelimit - (time.time() - start_time)
-            if sa_timelimit > 0:
+            if sa_timelimit > 0 :
                 all_bundles, _ = simulated_annealing(all_bundles, K, dist_mat, all_orders, all_riders, sa_timelimit)
                 cur_obj = sum((bundle.cost for bundle in all_bundles)) / K
                 if cur_obj < best_obj:
                     best_obj = cur_obj
                     print(f'Best obj (SA) = {best_obj}')
+        '''
 
     cur_obj = sum((bundle.cost for bundle in all_bundles)) / K
     if cur_obj < best_obj:
         best_obj = cur_obj
         print(f'Final best obj = {best_obj}')
+    count_bundles(all_bundles)
     solution = [
         [bundle.rider.type, bundle.shop_seq, bundle.dlv_seq]
         for bundle in all_bundles
